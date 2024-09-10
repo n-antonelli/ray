@@ -64,7 +64,7 @@ from ray.tune.registry import get_trainable_cls, register_env
 parser = add_rllib_example_script_args(
     default_iters=200,
     default_timesteps=1000000,
-    default_reward=0.0,
+    default_reward=0.0, # Reward total para cortar enntrenamiento
 )
 
 
