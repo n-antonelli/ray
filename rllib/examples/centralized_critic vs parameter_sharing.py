@@ -56,7 +56,7 @@ env1 = TwoStepGame
 env2 = PettingZooEnv
 env = env2
 
-if env == env1:
+if env == env1: # TwoStepGame
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--framework",
@@ -79,7 +79,7 @@ if env == env1:
     parser.add_argument(
         "--stop-reward", type=float, default=7.99, help="Reward at which we stop training."
     )
-elif env == env2:
+elif env == env2: # PettingZooEnv
     parser = add_rllib_example_script_args(
         default_iters=200,
         default_timesteps=1000000,
@@ -133,7 +133,7 @@ def central_critic_observer(agent_obs, **kw):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-    if env == env2:
+    if env == env2: # PettingZooEnv
         args.num_agents = 2
         args.enable_new_api_stack = True
         register_env("env", lambda _: PettingZooEnv(waterworld_v4.env()))

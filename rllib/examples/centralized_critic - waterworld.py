@@ -1,7 +1,10 @@
+
+from pettingzoo.sisl import waterworld_v4
 import argparse
 import numpy as np
 import os
 import ray
+"""
 from ray import tune
 from ray.rllib.algorithms.ppo.ppo import PPOTrainer
 from ray.rllib.algorithms.ppo.ppo_tf_policy import PPOTFPolicy, KLCoeffMixin, \
@@ -11,21 +14,24 @@ from ray.rllib.agents.ppo.ppo_torch_policy import PPOTorchPolicy, \
 from ray.rllib.evaluation.postprocessing import compute_advantages, \
     Postprocessing
 from ray.rllib.examples.envs.classes.two_step_game import TwoStepGame
-#from ray.rllib.examples.models.centralized_critic_models import \
-#    CentralizedCriticModel, TorchCentralizedCriticModel
+from ray.rllib.examples.models.centralized_critic_models import \
+    CentralizedCriticModel, TorchCentralizedCriticModel
+from ray.rllib.policy.tf_policy import LearningRateSchedule, \
+    EntropyCoeffSchedule # no están en tf_policy y torch_policy
+from ray.rllib.policy.torch_policy import LearningRateSchedule as TorchLR, \
+    EntropyCoeffSchedule as TorchEntropyCoeffSchedule
+from ray.rllib.env.wrappers.pettingzoo_env import PettingZooEnv
+"""
+from ray.rllib.evaluation.postprocessing import compute_advantages
 from ray.rllib.examples._old_api_stack.models.centralized_critic_models import (
     YetAnotherCentralizedCriticModel,
     YetAnotherTorchCentralizedCriticModel,
 )
 from ray.rllib.models import ModelCatalog
 from ray.rllib.policy.sample_batch import SampleBatch
-from ray.rllib.policy.tf_policy import LearningRateSchedule, \
-    EntropyCoeffSchedule # no están en tf_policy y torch_policy
-from ray.rllib.policy.torch_policy import LearningRateSchedule as TorchLR, \
-    EntropyCoeffSchedule as TorchEntropyCoeffSchedule
 from ray.rllib.utils.test_utils import check_learning_achieved
-from ray.rllib.utils.tf_ops import explained_variance, make_tf_callable
-from ray.rllib.utils.torch_ops import convert_to_torch_tensor
+from ray.rllib.utils.tf_utils import make_tf_callable
+from ray.rllib.utils.torch_utils import convert_to_torch_tensor
 from ray.rllib.models.modelv2 import ModelV2
 from ray.rllib.models.tf.tf_modelv2 import TFModelV2
 from ray.rllib.models.tf.fcnet import FullyConnectedNetwork
@@ -34,10 +40,26 @@ from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.rllib.models.torch.fcnet import FullyConnectedNetwork as TorchFC
 from ray.rllib.utils.annotations import override
 from ray.rllib.utils.framework import try_import_tf, try_import_torch
-from ray.tune.registry import register_env
-# from ray.rllib.env.wrappers.pettingzoo_env import PettingZooEnv
+from ray.tune.registry import get_trainable_cls, register_env
 from ray.rllib.env.wrappers.pettingzoo_env import PettingZooEnv
-from pettingzoo.sisl import waterworld_v3
+
+
+from ray import air, tune
+from ray.rllib.algorithms.ppo import PPOConfig
+from ray.rllib.algorithms.callbacks import DefaultCallbacks
+from gymnasium.spaces import Dict, Discrete, MultiDiscrete, Box
+from ray.rllib.core.rl_module.multi_rl_module import MultiRLModuleSpec
+from ray.rllib.core.rl_module.rl_module import RLModuleSpec
+from ray.rllib.utils.test_utils import (
+    add_rllib_example_script_args,
+    run_rllib_example_script_experiment,
+)
+from ray.air.constants import TRAINING_ITERATION
+from ray.rllib.utils.metrics import (
+    ENV_RUNNER_RESULTS,
+    EPISODE_RETURN_MEAN,
+    NUM_ENV_STEPS_SAMPLED_LIFETIME,
+)
 
 tf1, tf, tfv = try_import_tf()
 torch, nn = try_import_torch()
@@ -234,7 +256,7 @@ def centralized_critic_postprocessing(policy,
         use_gae=policy.config["use_gae"])
     return train_batch
 
-
+"""
 # Copied from PPO but optimizing the central value function.
 def loss_with_central_critic(policy, model, dist_class, train_batch):
     CentralizedValueMixin.__init__(policy)
@@ -310,28 +332,71 @@ CCTrainer = PPOTrainer.with_updates(
     default_policy=CCPPOTFPolicy,
     get_policy_class=get_policy_class,
 )
+"""
 
+class FillInActions(DefaultCallbacks):
+    """Fills in the opponent actions info in the training batches."""
+
+    def on_postprocess_trajectory(
+        self,
+        worker,
+        episode,
+        agent_id,
+        policy_id,
+        policies,
+        postprocessed_batch,
+        original_batches,
+        **kwargs,
+    ):
+        to_update = postprocessed_batch[SampleBatch.CUR_OBS]
+        other_id = 1 if agent_id == 0 else 0
+        action_encoder = ModelCatalog.get_preprocessor_for_space(Discrete(2))
+
+        # set the opponent actions into the observation
+        _, opponent_batch = original_batches[other_id]
+        opponent_actions = np.array(
+            [action_encoder.transform(a) for a in opponent_batch[SampleBatch.ACTIONS]]
+        )
+        to_update[:, -2:] = opponent_actions
+def central_critic_observer(agent_obs, **kw):
+    """Rewrites the agent obs to include opponent data for training."""
+
+    new_obs = {
+        0: {
+            "own_obs": agent_obs[0],
+            "opponent_obs": agent_obs[1],
+            "opponent_action": 0,  # filled in by FillInActions
+        },
+        1: {
+            "own_obs": agent_obs[1],
+            "opponent_obs": agent_obs[0],
+            "opponent_action": 0,  # filled in by FillInActions
+        },
+    }
+    return new_obs
+
+parser = add_rllib_example_script_args(
+    default_iters=200,
+    default_timesteps=1000000,
+    default_reward=0.0,
+)
 
 if __name__ == "__main__":
-    ray.init()
-    args = parser.parse_args()
+    #ray.init()
+    #args = parser.parse_args()
 
 
+    """
     def env_creator(args):
-        return PettingZooEnv(waterworld_v3.env(n_pursuers=5, n_evaders=5, n_sensors=30))
-
-
+        return PettingZooEnv(waterworld_v4.env())
     env = env_creator({})
     register_env("waterworld", env_creator)
 
     obs_space = env.observation_space
     action_space = env.action_space
-    policies = {agent: (None, obs_space, action_space, {}) for agent in env.agents}
-
-    ModelCatalog.register_custom_model(
-        "cc_model", YetAnotherTorchCentralizedCriticModel
-        if args.torch else YetAnotherCentralizedCriticModel)
-
+    policies = {agent: (None, obs_space, action_space, {}) for agent in env.get_agent_ids()}
+    
+    # Forma original de centralized critic - waterworld
     config = {
         "env": "waterworld",
         "batch_mode": "complete_episodes",
@@ -348,13 +413,108 @@ if __name__ == "__main__":
         "framework": "torch" if args.torch else "tf",
     }
 
+    args.enable_new_api_stack = True
+    register_env("env", lambda _: PettingZooEnv(waterworld_v4.env()))
+    env = "env"
+
+    # Forma de Centralized Critic original Rllib
+    config = (
+        PPOConfig()
+        .environment(env)
+        .framework("torch" if args.torch else "tf")
+        .env_runners(
+            batch_mode="complete_episodes",
+            num_env_runners=0,
+            # TODO(avnishn) make a new example compatible w connectors.
+            enable_connectors=False,
+        )
+        .callbacks(FillInActions)
+        .training(model={"custom_model": "cc_model"})
+        .multi_agent(
+            policies={
+                "pol1": (None, observer_space, action_space, {}),
+                "pol2": (None, observer_space, action_space, {}),
+            },
+            policy_mapping_fn=lambda agent_id, episode, worker, **kwargs: "pol1"
+            if agent_id == 0
+            else "pol2",
+            observation_fn=central_critic_observer,
+        )
+        # Use GPUs iff `RLLIB_NUM_GPUS` env var set to > 0.
+        .resources(num_gpus=int(os.environ.get("RLLIB_NUM_GPUS", "0")))
+    )
+
     stop = {
-        "training_iteration": args.stop_iters,
-        "timesteps_total": args.stop_timesteps,
-        "episode_reward_mean": args.stop_reward,
+        TRAINING_ITERATION: args.stop_iters,
+        NUM_ENV_STEPS_SAMPLED_LIFETIME: args.stop_timesteps,
+        f"{ENV_RUNNER_RESULTS}/{EPISODE_RETURN_MEAN}": args.stop_reward,
     }
 
-    results = tune.run(CCTrainer, config=config, stop=stop, verbose=1)
+    #results = tune.run(CCTrainer, config=config, stop=stop, verbose=1)
+    tuner = tune.Tuner(
+        "PPO",
+        param_space=config.to_dict(), #config.to_dict(),
+        run_config=air.RunConfig(stop=stop, verbose=1),
+    )
+    results = tuner.fit()
 
     if args.as_test:
         check_learning_achieved(results, args.stop_reward)
+    """
+    # Forma 3 de Pettingzoo - parameter sharing orig
+    args = parser.parse_args()
+    args.num_agents = 2
+    args.enable_new_api_stack = True
+    assert args.num_agents > 0, "Must set --num-agents > 0 when running this script!"
+    assert (
+        args.enable_new_api_stack
+    ), "Must set --enable-new-api-stack when running this script!"
+    ModelCatalog.register_custom_model(
+        "cc_model", YetAnotherTorchCentralizedCriticModel
+        if args.framework == 'torch' else YetAnotherCentralizedCriticModel)
+
+    action_space = Box(low = -2**63, high = 2**63-2,shape = [2])
+    observer_space = Dict(
+        {
+            "own_obs": MultiDiscrete([256]),
+            # These two fields are filled in by the CentralCriticObserver, and are
+            # not used for inference, only for training.
+            "opponent_obs": MultiDiscrete([256]),
+            "opponent_action": Box(low = -2**63, high = 2**63-2,shape = [1, 2]),
+        }
+    )
+
+    register_env("env", lambda _: PettingZooEnv(waterworld_v4.env()))
+
+    # Policies are called just like the agents (exact 1:1 mapping).
+    policies = {f"pursuer_{i}" for i in range(args.num_agents)}  # Crea una política para cada agente
+
+
+    base_config = (
+        get_trainable_cls(args.algo)
+        .get_default_config()
+        .environment("env")
+        .multi_agent(
+            policies=policies,
+            # Exact 1:1 mapping from AgentID to ModuleID.
+            policy_mapping_fn=(lambda aid, *args, **kwargs: aid),  # Mapea la política con el agente
+            #policies={"p0"},
+            ## All agents map to the exact same policy.
+            #policy_mapping_fn=(lambda aid, *args, **kwargs: "p0"),
+
+            observation_fn=central_critic_observer,
+        )
+        .training(
+            model={
+                "vf_share_layers": True,
+            },
+            vf_loss_coeff=0.005,
+        )
+        .rl_module(
+            rl_module_spec=MultiRLModuleSpec(
+                module_specs={p: RLModuleSpec() for p in policies},
+            ),
+        )
+    )
+
+    run_rllib_example_script_experiment(base_config, args)
