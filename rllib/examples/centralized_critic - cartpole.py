@@ -4,24 +4,7 @@ import argparse
 import numpy as np
 import os
 import ray
-"""
-from ray import tune
-from ray.rllib.algorithms.ppo.ppo import PPOTrainer
-from ray.rllib.algorithms.ppo.ppo_tf_policy import PPOTFPolicy, KLCoeffMixin, \
-    ppo_surrogate_loss as tf_loss
-from ray.rllib.agents.ppo.ppo_torch_policy import PPOTorchPolicy, \
-    KLCoeffMixin as TorchKLCoeffMixin, ppo_surrogate_loss as torch_loss
-from ray.rllib.evaluation.postprocessing import compute_advantages, \
-    Postprocessing
-from ray.rllib.examples.envs.classes.two_step_game import TwoStepGame
-from ray.rllib.examples.models.centralized_critic_models import \
-    CentralizedCriticModel, TorchCentralizedCriticModel
-from ray.rllib.policy.tf_policy import LearningRateSchedule, \
-    EntropyCoeffSchedule # no están en tf_policy y torch_policy
-from ray.rllib.policy.torch_policy import LearningRateSchedule as TorchLR, \
-    EntropyCoeffSchedule as TorchEntropyCoeffSchedule
-from ray.rllib.env.wrappers.pettingzoo_env import PettingZooEnv
-"""
+
 from ray.rllib.evaluation.postprocessing import compute_advantages
 from ray.rllib.examples._old_api_stack.models.centralized_critic_models import (
     YetAnotherCentralizedCriticModel,
@@ -60,8 +43,8 @@ from ray.rllib.utils.metrics import (
     EPISODE_RETURN_MEAN,
     NUM_ENV_STEPS_SAMPLED_LIFETIME,
 )
-from torch.utils.tensorboard import SummaryWriter
-writer = SummaryWriter()
+
+
 
 tf1, tf, tfv = try_import_tf()
 torch, nn = try_import_torch()
@@ -473,23 +456,22 @@ if __name__ == "__main__":
     assert (
         args.enable_new_api_stack
     ), "Must set --enable-new-api-stack when running this script!"
-    ModelCatalog.register_custom_model(
-        "cc_model", YetAnotherTorchCentralizedCriticModel
-        if args.framework == 'torch' else YetAnotherCentralizedCriticModel)
 
-    action_space = Box(low = -2**63, high = 2**63-2,shape = [2])
+
+    action_space = Discrete(1)
     observer_space = Dict(
         {
-            "own_obs": MultiDiscrete([256]), # 30 * 8 + 2
+            "own_obs": Box(low = -2.4, high = 2.4,shape = [1,4]),
             # These two fields are filled in by the CentralCriticObserver, and are
             # not used for inference, only for training.
-            "opponent_obs": MultiDiscrete([256]),
-            "opponent_action": Box(low = -2**63, high = 2**63-2,shape = [1, 2]),
+            "opponent_obs": Box(low = -2.4, high = 2.4,shape = [1,4]),
+            "opponent_action": Discrete(1),
         }
     )
 
-    register_env("env", lambda _: PettingZooEnv(waterworld_v4.env()))
-
+    #register_env("env", lambda _: PettingZooEnv(waterworld_v4.env()))
+    from ray.rllib.examples.envs.classes.multi_agent import MultiAgentCartPole
+    register_env("env", lambda _: MultiAgentCartPole(config={"num_agents": args.num_agents}))
 
     # Policies are called just like the agents (exact 1:1 mapping).
     policies = {f"pursuer_{i}" for i in range(args.num_agents)}  # Crea una política para cada agente
@@ -499,6 +481,14 @@ if __name__ == "__main__":
         get_trainable_cls(args.algo)
         .get_default_config()
         .environment("env")
+        .env_runners(
+            # TODO (sven): MAEnvRunner does not support vectorized envs yet
+            #  due to gym's env checkers and non-compatability with RLlib's
+            #  MultiAgentEnv API.
+            num_envs_per_env_runner=1
+            if args.num_agents > 0
+            else 20,
+        )
         .multi_agent(
             policies=policies,
             # Exact 1:1 mapping from AgentID to ModuleID.
