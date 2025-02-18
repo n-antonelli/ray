@@ -54,7 +54,7 @@ Method = Method1
 
 env1 = TwoStepGame
 env2 = PettingZooEnv
-env = env2
+env = env1
 
 if env == env1: # TwoStepGame
     parser = argparse.ArgumentParser()
