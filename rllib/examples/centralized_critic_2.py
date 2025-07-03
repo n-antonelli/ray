@@ -39,7 +39,8 @@ from ray.rllib.utils.metrics import (
     NUM_ENV_STEPS_SAMPLED_LIFETIME,
 )
 from ray.rllib.utils.test_utils import check_learning_achieved
-
+import ray
+ray.init(local_mode=True)
 parser = argparse.ArgumentParser()
 parser.add_argument(
     "--framework",
@@ -95,7 +96,7 @@ def central_critic_observer(agent_obs, **kw):
 
     new_obs = {
         0: {
-            "own_obs": agent_obs[0],
+            "own_obs": 0.5,
             "opponent_obs": agent_obs[1],
             "opponent_action": 0,  # filled in by FillInActions
         },
